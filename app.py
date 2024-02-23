@@ -1,66 +1,68 @@
 from tempfile import NamedTemporaryFile
 import os
-
 import streamlit as st
 from llama_index.core import VectorStoreIndex
 from llama_index.llms.openai import OpenAI
-from llama_index.readers.file import PDFReader
+from llama_index.readers.file import PDFReader 
 from dotenv import load_dotenv
 
 load_dotenv()
 
 st.set_page_config(
-    page_title="Chat with the PDF",
-    page_icon="🦙",
+    page_title="Whitepaper Analysis",
+    page_icon="📄",
     layout="centered",
     initial_sidebar_state="auto",
     menu_items=None,
 )
 
-if "messages" not in st.session_state.keys():  # Initialize the chat messages history
-    st.session_state.messages = [
-        {"role": "assistant", "content": "Ask me a question about your document!"}
-    ]
+# Initialize session state for messages if it doesn't exist
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-uploaded_file = st.file_uploader("Upload a file")
+uploaded_file = st.file_uploader("Upload your white paper", type=['pdf'])
+
+
+# Proceed only if a file is uploaded
 if uploaded_file:
-    bytes_data = uploaded_file.read()
-    with NamedTemporaryFile(delete=False) as tmp:  # open a named temporary file
-        tmp.write(bytes_data)  # write data from the uploaded file into it
-        with st.spinner(
-            text="Loading and indexing the Streamlit docs – hang tight! This should take 1-2 minutes."
-        ):
-            reader = PDFReader()
-            docs = reader.load_data(tmp.name)
-            llm = OpenAI(
-                api_key=os.getenv("OPENAI_API_KEY"),
-                base_url=os.getenv("OPENAI_API_BASE"),
-                model="gpt-3.5-turbo",
-                temperature=0.0,
-                system_prompt="You are an expert on the content of the document, provide detailed answers to the questions. Use the document to support your answers.",
-            )
-            index = VectorStoreIndex.from_documents(docs)
-    os.remove(tmp.name)  # remove temp file
+    with NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(uploaded_file.getvalue())
+        document_path = tmp.name
+    
+    # Inform the user that the whitepaper is being processed
+    st.text("Processing the whitepaper...")
 
-    if "chat_engine" not in st.session_state.keys():  # Initialize the chat engine
-        st.session_state.chat_engine = index.as_chat_engine(
-            chat_mode="condense_question", verbose=False, llm=llm
-        )
+    # Initialize the OpenAI model
+    llm = OpenAI(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        base_url=os.getenv("OPENAI_API_BASE"),
+        model="gpt-3.5-turbo",
+        temperature=0.0
+    )
 
-if prompt := st.chat_input(
-    "Your question"
-):  # Prompt for user input and save to chat history
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    # Load the whitepaper content
+    with st.spinner("Reading the whitepaper..."):
+        reader = PDFReader(document_path)
+        whitepaper_text = reader.load_data(document_path)
 
-for message in st.session_state.messages:  # Display the prior chat messages
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
+    # Clean up: remove the temporary file
+    os.remove(document_path)
 
-# If last message is not from assistant, generate a new response
-if st.session_state.messages[-1]["role"] != "assistant":
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            response = st.session_state.chat_engine.stream_chat(prompt)
-            st.write_stream(response.response_gen)
-            message = {"role": "assistant", "content": response.response}
-            st.session_state.messages.append(message)  # Add response to message history
+# Ask the user for a question
+user_question = st.text_input("What would you like to know about the whitepaper?")
+
+# If there is a question, process it
+if user_question:
+    st.session_state.messages.append({"role": "user", "content": user_question})
+    with st.spinner("Generating an answer..."):
+        # Use the OpenAI API to get a response
+        response = st.session_state.chat_engine.stream_chat(prompt)
+        prompt=f"{whitepaper_text}\n\nQuestion: {user_question}\nAnswer:",
+        
+        answer = response.choices[0].text.strip()  # Extract the answer text
+        st.session_state.messages.append({"role": "assistant", "content": answer})
+
+    
+# Display previous messages
+for message in st.session_state.messages:
+    st.text(f"{message['role']}: {message['content']}")
